@@ -515,6 +515,67 @@ class SimpleLossFunction:
 
 
 @dataclass
+class SimpleLossFunctionWithRDrop:
+    """
+    A simple loss function that computes the loss using the criterion given
+    """
+    generator: Generator
+    criterion: Criterion
+    opt: Optimizer
+    rdrop: int
+
+    def __call__(self, x_feats, y_seqs, normalizer, train_mode=True, take_step=True, get_out=False):
+        if train_mode:
+            return self.compute_train_loss(x_feats, y_seqs, normalizer, take_step=take_step, get_out=get_out)
+        else:
+            return self.compute_valid_loss(x_feats, y_seqs, normalizer, get_out=get_out)
+
+    def compute_train_loss(self, x_feats, y_seqs, normalizer, take_step=True, get_out=False):
+        # B x T x D --> B x T x V
+        x_lprobs = self.generator(x_feats, score=self.criterion.input_type)
+        scores = x_lprobs.contiguous().view(-1, x_lprobs.size(-1))  # B x T x V --> B.T x V
+        truth = y_seqs.contiguous().view(-1)  # B x T --> B.T
+        nll_loss = self.criterion(scores, truth).sum() / (2 * normalizer)
+        kl_loss = self.compute_kl_loss(x_lprobs, normalizer)
+
+        loss = nll_loss + self.rdrop * kl_loss
+
+        dtorch.backward(loss)
+        if take_step:
+            dtorch.step(self.opt)
+
+        result = (loss.item(), nll_loss.item(), kl_loss.item())
+        if get_out:
+            result = (result, x_lprobs.argmax(dim=-1))
+        return result
+
+    def compute_valid_loss(self, x_feats, y_seqs, normalizer, get_out=False):
+        # B x T x D --> B x T x V
+        x_lprobs = self.generator(x_feats, score=self.criterion.input_type)
+        scores = x_lprobs.contiguous().view(-1, x_lprobs.size(-1))  # B x T x V --> B.T x V
+        truth = y_seqs.contiguous().view(-1)  # B x T --> B.T
+        loss = self.criterion(scores, truth).sum() / normalizer
+
+        result = loss.item()
+        if get_out:
+            result = (result, x_lprobs.argmax(dim=-1))
+        return result
+
+    def compute_kl_loss(self, lprobs, normalizer):
+        net_prob = lprobs
+        net_prob_tec = torch.exp(lprobs)
+
+        p, q = torch.split(net_prob, net_prob.size(0) // 2, dim=0)
+        p_tec, q_tec = torch.split(net_prob_tec, net_prob_tec.size(0) // 2, dim=0)
+
+        p_loss = torch.nn.functional.kl_div(p, q_tec, reduction='sum')
+        q_loss = torch.nn.functional.kl_div(q, p_tec, reduction='sum')
+
+        loss = (p_loss + q_loss) / (2 * normalizer)
+        return loss
+
+
+@dataclass
 class ChunkedLossCompute(SimpleLossFunction):
     chunk_size: int = 10
 
@@ -564,6 +625,104 @@ class ChunkedLossCompute(SimpleLossFunction):
             return total
 
 
+@dataclass
+class ChunkedLossComputeWithRDrop(SimpleLossFunctionWithRDrop):
+    chunk_size: int = 10
+
+    def __call__(self, x_feats, y_seqs, normalizer, train_mode=True, take_step=True, get_out=False):
+        if train_mode:
+            return self.compute_train_loss(x_feats, y_seqs, normalizer, take_step=take_step, get_out=get_out)
+        else:
+            return self.compute_valid_loss(x_feats, y_seqs, normalizer, get_out=get_out)
+
+    def compute_train_loss(self, y_feats, y_seqs, normalizer, chunk_size=None, take_step=True, get_out=False):
+        """
+
+        :param y_feats:
+        :param y_seqs:
+        :param normalizer:
+        :param train_mode: Should the gradients be propagated
+        :param chunk_size:  Chunk  size along the time dim
+        :param take_step: should the optimizer.step() be called
+        :param get_out: should the best outputs be returned
+        :return: total_loss if get_outs=False (default)
+                (total_loss, outputs) if get_out=True
+        """
+        chunk_size = chunk_size or self.chunk_size
+        assert chunk_size > 0
+        total = 0
+        total_nll = 0
+        total_kl = 0
+        _y_feats = y_feats.detach().clone()
+        _y_feats.requires_grad = True  # yet collect grads
+        out_chunks = []
+        for i in range(0, _y_feats.shape[1], chunk_size):
+            # grad network is cut here
+            chunked_feats = _y_feats[:, i:i + chunk_size]
+            chunked_lprobs = self.generator(chunked_feats, score=self.criterion.input_type)
+
+            # B x C x V -> B.C x V
+            chunked_dist = chunked_lprobs.contiguous().view(-1, chunked_lprobs.shape[-1])
+            chunked_ys = y_seqs[:, i:i + chunk_size].contiguous().view(-1)  # B x C -> B.C
+            nll_loss = self.criterion(chunked_dist, chunked_ys).sum() / (2 * normalizer)
+            kl_loss = self.compute_kl_loss(chunked_lprobs, normalizer)
+
+            loss = nll_loss + self.rdrop * kl_loss
+            total += loss.detach().item()
+            total_nll += nll_loss.detach().item()
+            total_kl += kl_loss.detach().item()
+            dtorch.backward(loss)
+            if get_out:
+                top_idxs = chunked_lprobs.argmax(dim=-1) # # B x C x V -> B x C
+                out_chunks.append(top_idxs)
+
+        out_grad = _y_feats.grad.data
+        y_feats.backward(gradient=out_grad)
+        if take_step:
+            dtorch.step(optimizer=self.opt)
+        if get_out:
+            outs = torch.cat(out_chunks, dim=1)
+            return (total, total_nll, total_kl), outs
+        else:
+            return total, total_nll, total_kl
+
+    def compute_valid_loss(self, y_feats, y_seqs, normalizer, chunk_size=None, get_out=False):
+        """
+
+        :param y_feats:
+        :param y_seqs:
+        :param normalizer:
+        :param chunk_size:  Chunk  size along the time dim
+        :param get_out: should the best outputs be returned
+        :return: total_loss if get_outs=False (default)
+                (total_loss, outputs) if get_out=True
+        """
+        chunk_size = chunk_size or self.chunk_size
+        assert chunk_size > 0
+        total = 0
+        _y_feats = y_feats.detach().clone()
+        _y_feats.requires_grad = True  # yet collect grads
+        out_chunks = []
+        for i in range(0, _y_feats.shape[1], chunk_size):
+            # grad network is cut here
+            chunked_feats = _y_feats[:, i:i + chunk_size]
+            chunked_dist = self.generator(chunked_feats, score=self.criterion.input_type)
+            if get_out:
+                top_idxs = chunked_dist.argmax(dim=-1) # # B x C x V -> B x C
+                out_chunks.append(top_idxs)
+            # B x C x V -> B.C x V
+            chunked_dist = chunked_dist.contiguous().view(-1, chunked_dist.shape[-1])
+            chunked_ys = y_seqs[:, i:i + chunk_size].contiguous().view(-1)  # B x C -> B.C
+            loss = self.criterion(chunked_dist, chunked_ys).sum() / normalizer
+            total += loss.detach().item()
+
+        if get_out:
+            outs = torch.cat(out_chunks, dim=1)
+            return total, outs
+        else:
+            return total
+
+
 class TransformerTrainer(SteppedTrainer):
 
     def __init__(self, exp: Experiment,
@@ -583,12 +742,20 @@ class TransformerTrainer(SteppedTrainer):
 
         generator = self.core_model.generator
         if not chunk_size or chunk_size < 1:
-            self.loss_func = SimpleLossFunction(generator=generator, criterion=self.criterion,
-                                                opt=self.opt)
+            if self.rdrop > 0:
+                self.loss_func = SimpleLossFunctionWithRDrop(generator=generator, criterion=self.criterion,
+                                                             opt=self.opt, rdrop=self.rdrop)
+            else:
+                self.loss_func = SimpleLossFunction(generator=generator, criterion=self.criterion,
+                                                    opt=self.opt)
         else:
             log.info(f"Using Chunked Loss Generator. chunk_size={chunk_size}")
-            self.loss_func = ChunkedLossCompute(generator=generator, criterion=self.criterion,
-                                                opt=self.opt, chunk_size=chunk_size)
+            if self.rdrop > 0:
+                self.loss_func = ChunkedLossComputeWithRDrop(generator=generator, criterion=self.criterion,
+                                                             opt=self.opt, chunk_size=chunk_size, rdrop=self.rdrop)
+            else:
+                self.loss_func = ChunkedLossCompute(generator=generator, criterion=self.criterion,
+                                                    opt=self.opt, chunk_size=chunk_size)
 
     def run_valid_epoch(self, data_iter: BatchIterable, dec_bos_cut=False, do_bleu=True):
         """
@@ -776,6 +943,10 @@ class TransformerTrainer(SteppedTrainer):
                 with autocast(enabled=dtorch.fp16):
                     # [Batch x Time x D]
                     out = self.model(x_seqs, y_seqs_with_bos, x_mask, y_mask)
+                    if self.rdrop > 0:
+                        out2 = self.model(x_seqs, y_seqs_with_bos, x_mask, y_mask)
+                        # [Batch*2 x Time x D]
+                        out = torch.cat([out, out2], dim=0)
 
                     # skip the last time step (the one with EOS as input)
                     out = out[:, :-1, :]
@@ -784,12 +955,20 @@ class TransformerTrainer(SteppedTrainer):
                     loss = self.loss_func(out, batch.y_seqs, num_toks, train_mode=True,
                                           take_step=take_step)
 
+                    if self.rdrop > 0:
+                        loss, nll_loss, kl_loss = loss
+                    else:
+                        nll_loss = loss
+                        kl_loss = 0.0
+
                 if stopper and take_step:
                     stopper.step()
                 # Log
                 unsaved_state = True
                 if self.opt.curr_step % log_interval == 0:
                     self.tbd.add_scalars('training', {'step_loss': loss,
+                                                      'nll_loss': nll_loss,
+                                                      'kl_loss': kl_loss,
                                                       'learn_rate': self.opt.curr_lr},
                                          self.opt.curr_step)
                     if log_resources and cuda_available:

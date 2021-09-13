@@ -261,6 +261,7 @@ class SteppedTrainer:
         'weight_decay': 0,
         'criterion': 'smooth_kld',
         'label_smoothing': 0.1,
+        'rdrop': 0.0,
         'warmup_steps': 8000,
         'inv_sqrt': False,
         'constant': 2
@@ -355,6 +356,7 @@ class SteppedTrainer:
             self.maybe_init_model()
 
         self.criterion = self.create_criterion(optim_args['criterion'])
+        self.rdrop = optim_args['rdrop']
 
     @property
     def start_step(self):
