@@ -534,7 +534,10 @@ class SimpleLossFunctionWithRDrop:
         # B x T x D --> B x T x V
         x_lprobs = self.generator(x_feats, score=self.criterion.input_type)
         scores = x_lprobs.contiguous().view(-1, x_lprobs.size(-1))  # B x T x V --> B.T x V
+
+        y_seqs = torch.cat([y_seqs, y_seqs.clone()], dim=0)
         truth = y_seqs.contiguous().view(-1)  # B x T --> B.T
+
         nll_loss = self.criterion(scores, truth).sum() / (2 * normalizer)
         kl_loss = self.compute_kl_loss(x_lprobs, normalizer)
 
@@ -653,6 +656,7 @@ class ChunkedLossComputeWithRDrop(SimpleLossFunctionWithRDrop):
         total = 0
         total_nll = 0
         total_kl = 0
+        y_seqs = torch.cat([y_seqs, y_seqs.clone()], dim=0)
         _y_feats = y_feats.detach().clone()
         _y_feats.requires_grad = True  # yet collect grads
         out_chunks = []
