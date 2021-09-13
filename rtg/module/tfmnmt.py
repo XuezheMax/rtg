@@ -20,7 +20,7 @@ from rtg.utils import get_my_args
 from rtg.utils import get_my_args
 from rtg.data.dataset import BatchIterable
 from rtg.module import NMTModel
-from rtg.module.trainer import TrainerState, SteppedTrainer, EarlyStopper
+from rtg.module.trainer import TrainerStateWithRDrop, SteppedTrainer, EarlyStopper
 from rtg.module.criterion import Criterion
 from torch.optim.optimizer import Optimizer
 from dataclasses import dataclass
@@ -907,7 +907,7 @@ class TransformerTrainer(SteppedTrainer):
             val_data = self.exp.get_val_data(batch_size=max_toks, shuffle=False, batch_first=True,
                                              sort_desc=False)
 
-        train_state = TrainerState(self.model, check_point=check_point)
+        train_state = TrainerStateWithRDrop(self.model, check_point=check_point)
         train_state.train_mode(True)
         unsaved_state = False
         cuda_available = torch.cuda.is_available()
@@ -978,7 +978,7 @@ class TransformerTrainer(SteppedTrainer):
                     if log_resources and cuda_available:
                         self._log_resources(batch)
 
-                progress_msg, is_check_pt = train_state.step(num_toks, loss)
+                progress_msg, is_check_pt = train_state.step(num_toks, loss, nll_loss, kl_loss)
                 progress_msg += f', LR={self.opt.curr_lr:0.8f}'
                 data_bar.set_postfix_str(progress_msg, refresh=False)
                 del batch

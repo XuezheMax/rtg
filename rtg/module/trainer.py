@@ -164,6 +164,47 @@ class TrainerState:
 
 
 @dataclass
+class TrainerStateWithRDrop(TrainerState):
+    """
+    A dataclass for storing any running stats the trainer needs to keep track during training
+    """
+    nll_loss: float = 0.0
+    kl_loss: float = 0.0
+
+    def running_loss(self):
+        total_loss = self.total_loss / self.steps if self.steps > 0 else float('inf')
+        nll_loss = self.nll_loss / self.steps if self.steps > 0 else float('inf')
+        kl_loss = self.kl_loss / self.steps if self.steps > 0 else float('inf')
+        return total_loss, nll_loss, kl_loss
+
+    def reset(self):
+        loss = self.running_loss()[0]
+        self.total_toks = 0
+        self.total_loss = 0.0
+        self.nll_loss = 0.0
+        self.kl_loss = 0.0
+        self.steps = 0
+        self.start = time.time()
+        return loss
+
+    def step(self, toks, loss, nll, kl):
+        self.steps += 1
+        self.total_toks += toks
+        self.total_loss += loss
+        self.nll_loss += nll
+        self.kl_loss += kl
+        return self.progress_bar_msg(), self.is_check_point()
+
+    def progress_bar_msg(self):
+        elapsed = time.time() - self.start
+        total_loss, nll_loss, kl_loss = self.running_loss()
+        return f'Loss:{total_loss:.4f},' \
+               f' NLL:{nll_loss:.4f},' \
+               f' KL:{kl_loss:.4f},' \
+               f' {int(self.total_toks / elapsed)}{self.unit}/s'
+
+
+@dataclass
 class EarlyStopper:
     """
     A data model to track early stopping state
