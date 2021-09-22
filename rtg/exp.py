@@ -398,6 +398,8 @@ class TranslationExperiment(BaseExperiment):
             self.mono_train_tgt = self.data_dir / 'mono.train.tgt.gz'
             self.mono_valid_src = self.data_dir / 'mono.valid.src.gz'
             self.mono_valid_tgt = self.data_dir / 'mono.valid.tgt.gz'
+        else:
+            self.mono_train_src = self.data_dir / 'mono.train.src.gz'
 
         self.parent_model_state = self.data_dir / 'parent_model_state.pt'
 
@@ -796,6 +798,7 @@ class TranslationExperiment(BaseExperiment):
             self.pre_process_mono(args)
         else:
             self.pre_process_parallel(args)
+            self.pre_process_mono(args)
 
         self.maybe_pre_process_embeds()
         # update state on disk

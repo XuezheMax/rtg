@@ -303,6 +303,7 @@ class SteppedTrainer:
         'criterion': 'smooth_kld',
         'label_smoothing': 0.1,
         'rdrop': 0.0,
+        'mlm': False,
         'warmup_steps': 8000,
         'inv_sqrt': False,
         'constant': 2

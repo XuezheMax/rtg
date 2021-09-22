@@ -748,7 +748,7 @@ class TransformerTrainer(SteppedTrainer):
         generator = self.core_model.generator
         if not chunk_size or chunk_size < 1:
             if self.rdrop > 0:
-                assert self.mlm == 0
+                assert not self.mlm
                 self.loss_func = SimpleLossFunctionWithRDrop(generator=generator, criterion=self.criterion,
                                                              opt=self.opt, rdrop=self.rdrop)
             else:
@@ -757,7 +757,7 @@ class TransformerTrainer(SteppedTrainer):
         else:
             log.info(f"Using Chunked Loss Generator. chunk_size={chunk_size}")
             if self.rdrop > 0:
-                assert self.mlm == 0
+                assert not self.mlm
                 self.loss_func = ChunkedLossComputeWithRDrop(generator=generator, criterion=self.criterion,
                                                              opt=self.opt, chunk_size=chunk_size, rdrop=self.rdrop)
             else:
