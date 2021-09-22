@@ -455,6 +455,7 @@ class Batch:
         self.bos_val: int = field.bos_idx
         self.eos_val: int = field.eos_idx
         self.pad_val: int = field.pad_idx
+        self.unk_val: int = field.unk_idx
         self.eos_x = add_eos_x
         self.eos_y = add_eos_y
         self.bos_x = add_bos_x
@@ -544,6 +545,17 @@ class Batch:
         tgt_mask = (tgt != pad_val).unsqueeze(1)
         tgt_mask = tgt_mask & subsequent_mask(tgt.size(-1)).type_as(tgt_mask.data)
         return tgt_mask
+
+    def mask_tokens(self, tgt, p, mask_val=None, pad_val=None):
+        if mask_val is None:
+            mask_val = self.unk_val
+        if pad_val is None:
+            pad_val = self.pad_val
+
+        pad_mask = tgt.ne(pad_val)
+
+        mask = torch.rand_like(tgt).lt(p) & pad_mask
+        return tgt.masked_fill(mask, mask_val), mask
 
 
 class BatchIterable(Iterable[Batch]):

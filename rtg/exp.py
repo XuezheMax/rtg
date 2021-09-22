@@ -971,7 +971,7 @@ class TranslationExperiment(BaseExperiment):
                         destination.name.replace('.model', '.vocab'))
                     IO.copy_file(src_txt_file, dst_txt_file)
 
-    def get_mono_data(self, split: str, side: str, batch_size: int, sort_desc: bool = False,
+    def get_mono_data(self, split: str, side: str, batch_size: Union[int, Tuple[int,int]], sort_desc: bool = False,
                       batch_first: bool = False, shuffle: bool = False, num_batches: int = 0):
         """
         reads monolingual data

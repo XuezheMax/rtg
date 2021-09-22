@@ -17,10 +17,9 @@ from tqdm import tqdm
 
 from rtg import device, log, TranslationExperiment as Experiment
 from rtg.utils import get_my_args
-from rtg.utils import get_my_args
 from rtg.data.dataset import BatchIterable
 from rtg.module import NMTModel
-from rtg.module.trainer import TrainerStateWithRDrop, SteppedTrainer, EarlyStopper
+from rtg.module.trainer import TrainerState, TrainerStateWithRDrop, SteppedTrainer, EarlyStopper
 from rtg.module.criterion import Criterion
 from torch.optim.optimizer import Optimizer
 from dataclasses import dataclass
@@ -182,9 +181,11 @@ class AbstractTransformerNMT(NMTModel, ABC):
     def decode(self, memory, src_mask, tgt, tgt_mask):
         return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
 
-    def forward(self, src, tgt, src_mask, tgt_mask, gen_probs=False, log_probs=True):
+    def forward(self, src, tgt, src_mask, tgt_mask, gen_probs=False, log_probs=True, encode_only=False):
         "Take in and process masked src and target sequences."
         enc_outs = self.encode(src, src_mask)
+        if encode_only:
+            return enc_outs
         feats = self.decode(enc_outs, src_mask, tgt, tgt_mask)
         return self.generator(feats, log_probs=log_probs) if gen_probs else feats
 
@@ -747,6 +748,7 @@ class TransformerTrainer(SteppedTrainer):
         generator = self.core_model.generator
         if not chunk_size or chunk_size < 1:
             if self.rdrop > 0:
+                assert self.mlm == 0
                 self.loss_func = SimpleLossFunctionWithRDrop(generator=generator, criterion=self.criterion,
                                                              opt=self.opt, rdrop=self.rdrop)
             else:
@@ -755,6 +757,7 @@ class TransformerTrainer(SteppedTrainer):
         else:
             log.info(f"Using Chunked Loss Generator. chunk_size={chunk_size}")
             if self.rdrop > 0:
+                assert self.mlm == 0
                 self.loss_func = ChunkedLossComputeWithRDrop(generator=generator, criterion=self.criterion,
                                                              opt=self.opt, chunk_size=chunk_size, rdrop=self.rdrop)
             else:
@@ -909,6 +912,20 @@ class TransformerTrainer(SteppedTrainer):
 
         train_state = TrainerStateWithRDrop(self.model, check_point=check_point)
         train_state.train_mode(True)
+
+        if self.mlm:
+            assert not (self.rdrop > 0)
+            mono_data = self.exp.get_mono_data('train', 'src', batch_size=(max_toks * 2, max_sents * 2),
+                                               batch_first=True, sort_desc=False,
+                                               num_batches=batches - start_batch, shuffle=True)
+            mono_state = TrainerState(self.model, check_point=check_point)
+            train_data = zip(train_data, mono_data)
+            mono_state.train_mode(True)
+            mlm_weight = self.model.src_embed[0].lut.weight
+        else:
+            mono_state = None
+            mlm_weight = None
+
         unsaved_state = False
         cuda_available = torch.cuda.is_available()
 
@@ -924,12 +941,15 @@ class TransformerTrainer(SteppedTrainer):
                 batch_count += 1
                 take_step = (batch_count % self.grad_accum_interval) == 0
 
-               # if update_interval == 0:
-               #     self.model.zero_grad()
+                if self.mlm:
+                    batch, mono_batch = batch
+                else:
+                    mono_batch = None
 
                 #  if not dataparallel, then move
                 if self.n_gpus <= 1:
                     batch = batch.to(device)
+
                 num_toks = batch.y_toks
                 x_seqs = batch.x_seqs
                 if dec_bos_cut:
@@ -957,13 +977,36 @@ class TransformerTrainer(SteppedTrainer):
 
                     # assumption:  y_seqs has EOS, and not BOS
                     loss = self.loss_func(out, batch.y_seqs, num_toks, train_mode=True,
-                                          take_step=take_step)
+                                          take_step=take_step and not self.mlm)
 
                     if self.rdrop > 0:
                         loss, nll_loss, kl_loss = loss
                     else:
                         nll_loss = loss
                         kl_loss = 0.0
+
+                if mono_batch is not None:
+                    if self.n_gpus <= 1:
+                        mono_batch = mono_batch.to(device)
+
+                    seqs = mono_batch.x_seqs
+                    x_mask = (seqs != mono_batch.pad_val).unsqueeze(1)
+                    masked_seq, mask = mono_batch.mask_tokens(seqs)
+                    tgt_seqs = seqs[mask]
+                    num_masked_toks = mask.int().sum().item()
+                    with autocast(enabled=dtorch.fp16):
+                        # [Batch x Time x D]
+                        out = self.model(masked_seq, None, x_mask, None, encode_only=True)
+                        # [B x D]
+                        out = out[mask, :]
+                        # [B, V]
+                        out = F.linear(out, mlm_weight)
+                        out = F.log_softmax(out, dim=-1)
+                        mlm_loss = self.loss_func(out, tgt_seqs, num_masked_toks, train_mode=True,
+                                                take_step=take_step)
+                else:
+                    mlm_loss = 0.0
+
 
                 if stopper and take_step:
                     stopper.step()
@@ -973,12 +1016,17 @@ class TransformerTrainer(SteppedTrainer):
                     self.tbd.add_scalars('training', {'step_loss': loss,
                                                       'nll_loss': nll_loss,
                                                       'kl_loss': kl_loss,
+                                                      'mlm_loss': mlm_loss,
                                                       'learn_rate': self.opt.curr_lr},
                                          self.opt.curr_step)
                     if log_resources and cuda_available:
                         self._log_resources(batch)
 
                 progress_msg, is_check_pt = train_state.step(num_toks, loss, nll_loss, kl_loss)
+                if mono_state is not None:
+                    progress_msg2, _ = mono_state.step(num_masked_toks, mlm_loss)
+                    progress_msg += f', MLM' + progress_msg2
+                    del mono_batch
                 progress_msg += f', LR={self.opt.curr_lr:0.8f}'
                 data_bar.set_postfix_str(progress_msg, refresh=False)
                 del batch
@@ -986,7 +1034,11 @@ class TransformerTrainer(SteppedTrainer):
                 # Save checkpoint
                 if is_check_pt:
                     train_loss = train_state.reset()
-                    log.info(f"Chkpt Train loss={train_loss}; Runs validation? {distr.is_global_main}")
+                    if mono_state is not None:
+                        mlm_loss = mono_state.reset()
+                    else:
+                        mlm_loss = 0.0
+                    log.info(f"Chkpt Train loss={train_loss}, MLM loss={mlm_loss}; Runs validation? {distr.is_global_main}")
                     if distr.is_global_main:
                         train_state.train_mode(False)
                         with torch.no_grad():
@@ -1014,6 +1066,9 @@ class TransformerTrainer(SteppedTrainer):
         if unsaved_state and distr.is_global_main:
             train_loss = train_state.reset()
             train_state.train_mode(False)
+            if mono_state is not None:
+                mono_state.reset()
+                mono_state.train_mode(False)
             val_loss = self.run_valid_epoch(val_data, dec_bos_cut=dec_bos_cut)
             self.make_check_point(train_loss, val_loss=val_loss, keep_models=keep_models)
 

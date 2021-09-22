@@ -398,6 +398,7 @@ class SteppedTrainer:
 
         self.criterion = self.create_criterion(optim_args['criterion'])
         self.rdrop = optim_args['rdrop']
+        self.mlm = optim_args['mlm']
 
     @property
     def start_step(self):
