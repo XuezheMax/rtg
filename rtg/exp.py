@@ -393,13 +393,11 @@ class TranslationExperiment(BaseExperiment):
         #assert (self.src_field is None) == (self.tgt_field is None)
 
         self._unsupervised = self.model_type in {'binmt', 'rnnlm', 'tfmlm'}
-        if self._unsupervised:
-            self.mono_train_src = self.data_dir / 'mono.train.src.gz'
-            self.mono_train_tgt = self.data_dir / 'mono.train.tgt.gz'
-            self.mono_valid_src = self.data_dir / 'mono.valid.src.gz'
-            self.mono_valid_tgt = self.data_dir / 'mono.valid.tgt.gz'
-        else:
-            self.mono_train_src = self.data_dir / 'mono.train.src.gz'
+            
+        self.mono_train_src = self.data_dir / 'mono.train.src.gz'
+        self.mono_train_tgt = self.data_dir / 'mono.train.tgt.gz'
+        self.mono_valid_src = self.data_dir / 'mono.valid.src.gz'
+        self.mono_valid_tgt = self.data_dir / 'mono.valid.tgt.gz'
 
         self.parent_model_state = self.data_dir / 'parent_model_state.pt'
 
