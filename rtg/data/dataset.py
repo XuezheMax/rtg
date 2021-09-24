@@ -105,7 +105,7 @@ class TSVData(Iterable[IdExample]):
         with IO.reader(self.path) as lines:
             for idx, line in enumerate(lines):
                 rec = line.split('\t')
-                if self.rank is not None and idx % self.world_size != self.rank:
+                if self.rank is not None and self.rank >=0 and idx % self.world_size != self.rank:
                     continue
                 x = self._parse(rec[0].strip())
                 y = self._parse(rec[1].strip()) if len(rec) > 1 else None
@@ -565,8 +565,10 @@ class Batch:
             pad_val = self.pad_val
 
         pad_mask = tgt.ne(pad_val)
+        bos_mask = tgt.ne(self.bos_val)
+        eos_mask = tgt.ne(self.eos_val)
 
-        mask = torch.rand_like(tgt, dtype=torch.float32).lt(p) & pad_mask
+        mask = torch.rand_like(tgt, dtype=torch.float32).lt(p) & pad_mask & bos_mask & eos_mask
         return tgt.masked_fill(mask, mask_val), mask
 
 

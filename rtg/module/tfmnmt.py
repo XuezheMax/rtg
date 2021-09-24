@@ -490,6 +490,27 @@ class PositionalEncoding(nn.Module):
 
 
 @dataclass
+class MLMSimpleLossFunction:
+    criterion: Criterion
+    opt: Optimizer
+
+    def __call__(self, x_probs, y_seqs, normalizer, train_mode=True, take_step=True, get_out=False):
+        # B x D
+        scores = x_probs.view(-1, x_probs.size(-1))  # B x T x V --> B.T x V
+        truth = y_seqs.view(-1)  # B x T --> B.T
+        loss = self.criterion(scores, truth).sum() / normalizer
+
+        if train_mode:  # don't do this for validation set
+            dtorch.backward(loss)
+            if take_step:
+                dtorch.step(self.opt)
+        result = loss.item()
+        if get_out:
+            result = (result, x_probs.argmax(dim=-1))
+        return result
+
+
+@dataclass
 class SimpleLossFunction:
     """
     A simple loss function that computes the loss using the criterion given
@@ -752,8 +773,7 @@ class TransformerTrainer(SteppedTrainer):
                 self.loss_func = SimpleLossFunctionWithRDrop(generator=generator, criterion=self.criterion,
                                                              opt=self.opt, rdrop=self.rdrop)
             else:
-                self.loss_func = SimpleLossFunction(generator=generator, criterion=self.criterion,
-                                                    opt=self.opt)
+                self.loss_func = SimpleLossFunction(generator=generator, criterion=self.criterion, opt=self.opt)
         else:
             log.info(f"Using Chunked Loss Generator. chunk_size={chunk_size}")
             if self.rdrop > 0:
@@ -763,6 +783,9 @@ class TransformerTrainer(SteppedTrainer):
             else:
                 self.loss_func = ChunkedLossCompute(generator=generator, criterion=self.criterion,
                                                     opt=self.opt, chunk_size=chunk_size)
+
+        if self.mlm:
+            self.mlm_loss_func = MLMSimpleLossFunction(criterion=self.criterion, opt=self.opt)
 
     def run_valid_epoch(self, data_iter: BatchIterable, dec_bos_cut=False, do_bleu=True):
         """
@@ -1002,8 +1025,8 @@ class TransformerTrainer(SteppedTrainer):
                         # [B, V]
                         out = F.linear(out, mlm_weight)
                         out = F.log_softmax(out, dim=-1)
-                        mlm_loss = self.loss_func(out, tgt_seqs, num_masked_toks, train_mode=True,
-                                                take_step=take_step)
+                        mlm_loss = self.mlm_loss_func(out, tgt_seqs, num_masked_toks,
+                                                      train_mode=True, take_step=take_step)
                 else:
                     mlm_loss = 0.0
 
