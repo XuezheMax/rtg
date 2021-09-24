@@ -566,7 +566,7 @@ class Batch:
 
         pad_mask = tgt.ne(pad_val)
 
-        mask = torch.rand_like(tgt).lt(p) & pad_mask
+        mask = torch.rand_like(tgt, dtype=torch.float32).lt(p) & pad_mask
         return tgt.masked_fill(mask, mask_val), mask
 
 
