@@ -74,7 +74,8 @@ class NLDbExample(IdExample):
 class TSVData(Iterable[IdExample]):
 
     def __init__(self, path: Union[str, Path], in_mem=False, shuffle=False, longest_first=True,
-                 max_src_len: int = 512, max_tgt_len: int = 512, truncate: bool = False):
+                 max_src_len: int = 512, max_tgt_len: int = 512, truncate: bool = False,
+                 rank=None, world_size=None):
         """
         :param path: path to TSV file have parallel sequences
         :param in_mem: hold data in memory instead of reading from file for subsequent pass.
@@ -91,6 +92,8 @@ class TSVData(Iterable[IdExample]):
         self.mem = list(self.read_all()) if self.in_mem else None
         self._len = len(self.mem) if self.in_mem else line_count(path)
         self.read_counter = 0
+        self.rank = rank
+        self.world_size = world_size
 
     @staticmethod
     def _parse(line: str):
@@ -100,6 +103,8 @@ class TSVData(Iterable[IdExample]):
         with IO.reader(self.path) as lines:
             recs = (line.split('\t') for line in lines)
             for idx, rec in enumerate(recs):
+                if self.rank is not None and idx % self.world_size != self.rank:
+                    continue
                 x = self._parse(rec[0].strip())
                 y = self._parse(rec[1].strip()) if len(rec) > 1 else None
                 if self.truncate:  # truncate long recs
@@ -564,6 +569,7 @@ class BatchIterable(Iterable[Batch]):
     def __init__(self, data_path: Union[str, Path], batch_size:Union[int, Tuple[int,int]], field: Field,
                  sort_desc: bool = False, batch_first: bool = True, shuffle: bool = False,
                  sort_by: str = None, keep_in_mem=False, raw_path: Tuple[Path]=None,
+                 rank: int=None, world_size=None,
                  device=cpu_device, y_is_cls=False, **kwargs):
         """
         Iterator for reading training data in batches
@@ -605,7 +611,8 @@ class BatchIterable(Iterable[Batch]):
         else:
             if sort_by:
                 raise Exception(f'sort_by={sort_by} not supported for TSV data')
-            self.data = TSVData(data_path, shuffle=shuffle, longest_first=False, **kwargs)
+            self.data = TSVData(data_path, shuffle=shuffle, longest_first=False,
+                                rank=rank, world_size=world_size, **kwargs)
             self.n_batches = len(self.data)
 
         if raw_path:  # for logging and validation BLEU
@@ -643,8 +650,11 @@ class BatchIterable(Iterable[Batch]):
         batch = []
         max_len = 0
         for ex in self.data:
-            if min(len(ex.x), len(ex.y)) == 0:
-                log.warn("Skipping a record,  either source or target is empty")
+            if len(ex.x) == 0:
+                log.warn("Skipping a record,  source is empty")
+                continue
+            elif ex.y is not None and len(ex.y) == 0:
+                log.warn("Skipping a record,  target is empty")
                 continue
 
             this_len = max(len(ex.x), len(ex.y))

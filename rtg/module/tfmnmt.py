@@ -916,8 +916,8 @@ class TransformerTrainer(SteppedTrainer):
         if self.mlm:
             assert not (self.rdrop > 0)
             mono_data = self.exp.get_mono_data('train', 'src', batch_size=(max_toks * 2, max_sents * 2),
-                                               batch_first=True, sort_desc=False,
-                                               num_batches=batches - start_batch, shuffle=True)
+                                               batch_first=True, sort_desc=False, shuffle=True,
+                                               num_batches=batches - start_batch, rank=distr.global_rank, world_size=distr.world_size)
             mono_state = TrainerState(self.model, check_point=check_point)
             train_data = zip(train_data, mono_data)
             mono_state.train_mode(True)

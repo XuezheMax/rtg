@@ -973,7 +973,7 @@ class TranslationExperiment(BaseExperiment):
                     IO.copy_file(src_txt_file, dst_txt_file)
 
     def get_mono_data(self, split: str, side: str, batch_size: Union[int, Tuple[int,int]], sort_desc: bool = False,
-                      batch_first: bool = False, shuffle: bool = False, num_batches: int = 0):
+                      batch_first: bool = False, shuffle: bool = False, num_batches: int = 0, rank=None, world_size=None):
         """
         reads monolingual data
         :param split: name of the split. choices = {train, valid}
@@ -999,7 +999,7 @@ class TranslationExperiment(BaseExperiment):
         field = self.tgt_vocab if side == 'tgt' else self.src_field
         data = BatchIterable(inp_file, batch_size=batch_size, sort_desc=sort_desc,
                              batch_first=batch_first, shuffle=shuffle, field=field,
-                             **self._get_batch_args())
+                             rank=rank, world_size=world_size, **self._get_batch_args())
 
         if num_batches > 0:
             data = LoopingIterable(data, num_batches)
