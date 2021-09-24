@@ -100,6 +100,7 @@ class TSVData(Iterable[IdExample]):
         return [int(t) for t in line.split()]
 
     def read_all(self) -> Iterator[IdExample]:
+        log.info(f"Loading TSV data, rank:{self.rank}, world size:{self.world_size}")
         with IO.reader(self.path) as lines:
             recs = (line.split('\t') for line in lines)
             for idx, rec in enumerate(recs):
