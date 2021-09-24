@@ -991,7 +991,7 @@ class TransformerTrainer(SteppedTrainer):
 
                     seqs = mono_batch.x_seqs
                     x_mask = (seqs != mono_batch.pad_val).unsqueeze(1)
-                    masked_seq, mask = mono_batch.mask_tokens(seqs)
+                    masked_seq, mask = mono_batch.mask_tokens(seqs, p=self.mask_prob)
                     tgt_seqs = seqs[mask]
                     num_masked_toks = mask.int().sum().item()
                     with autocast(enabled=dtorch.fp16):

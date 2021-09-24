@@ -304,6 +304,7 @@ class SteppedTrainer:
         'label_smoothing': 0.1,
         'rdrop': 0.0,
         'mlm': False,
+        'mask_prob': 0.0,
         'warmup_steps': 8000,
         'inv_sqrt': False,
         'constant': 2
@@ -400,6 +401,7 @@ class SteppedTrainer:
         self.criterion = self.create_criterion(optim_args['criterion'])
         self.rdrop = optim_args['rdrop']
         self.mlm = optim_args['mlm']
+        self.mask_prob = optim_args['mask_prob']
 
     @property
     def start_step(self):
