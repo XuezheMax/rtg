@@ -20,7 +20,7 @@ from rtg.utils import get_my_args
 from rtg.data.dataset import BatchIterable
 from rtg.module import NMTModel
 from rtg.module.trainer import TrainerState, TrainerStateWithRDrop, SteppedTrainer, EarlyStopper
-from rtg.module.criterion import Criterion
+from rtg.module.criterion import Criterion, SmoothKLD
 from torch.optim.optimizer import Optimizer
 from dataclasses import dataclass
 from sacrebleu import corpus_bleu
@@ -785,7 +785,9 @@ class TransformerTrainer(SteppedTrainer):
                                                     opt=self.opt, chunk_size=chunk_size)
 
         if self.mlm:
-            self.mlm_loss_func = MLMSimpleLossFunction(criterion=self.criterion, opt=self.opt)
+            mlm_criterion = SmoothKLD(vocab_size=self.core_model.src_embed[0].vocab, smoothing=0.1,
+                                      pad_idx=self.exp.src_vocab.pad_idx)
+            self.mlm_loss_func = MLMSimpleLossFunction(criterion=mlm_criterion, opt=self.opt)
 
     def run_valid_epoch(self, data_iter: BatchIterable, dec_bos_cut=False, do_bleu=True):
         """
