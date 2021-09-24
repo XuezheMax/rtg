@@ -118,9 +118,9 @@ class TSVData(Iterable[IdExample]):
                     log.warning(f"Ignoring an empty record  x:{len(x)}    y:{len(y)}")
                     continue
 
-                nums +=1
-                if idx % 1000000 == 0:
-                    log.info(f"Loading {idx} ({nums}) records")
+                # nums +=1
+                # if idx % 1000000 == 0:
+                #     log.info(f"Loading {idx} ({nums}) records")
                 yield IdExample(x, y, id=idx)
 
     def __len__(self):
