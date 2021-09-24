@@ -92,7 +92,7 @@ class TSVData(Iterable[IdExample]):
         self.world_size = world_size
         self.max_src_len, self.max_tgt_len = max_src_len, max_tgt_len
         self.mem = list(self.read_all()) if self.in_mem else None
-        self._len = len(self.mem) if self.in_mem else line_count(path)
+        self._len = len(self.mem) if self.in_mem else -1
         self.read_counter = 0
 
     @staticmethod
@@ -118,10 +118,11 @@ class TSVData(Iterable[IdExample]):
                     log.warning(f"Ignoring an empty record  x:{len(x)}    y:{len(y)}")
                     continue
 
-                # nums +=1
+                nums +=1
                 # if idx % 1000000 == 0:
                 #     log.info(f"Loading {idx} ({nums}) records")
                 yield IdExample(x, y, id=idx)
+        self._len = nums
 
     def __len__(self):
         return self._len
@@ -619,7 +620,7 @@ class BatchIterable(Iterable[Batch]):
                 raise Exception(f'sort_by={sort_by} not supported for TSV data')
             self.data = TSVData(data_path, shuffle=shuffle, longest_first=False,
                                 rank=rank, world_size=world_size, **kwargs)
-            self.n_batches = len(self.data)
+            self.n_batches = -1
 
         if raw_path:  # for logging and validation BLEU
             # Only narrower use case is supported
@@ -663,7 +664,7 @@ class BatchIterable(Iterable[Batch]):
                 log.warn("Skipping a record,  target is empty")
                 continue
 
-            this_len = max(len(ex.x), len(ex.y))
+            this_len = len(ex.x) if ex.y is None else max(len(ex.x), len(ex.y))
             if len(batch) < self.max_sents and (len(batch) + 1) * max(max_len, this_len) <= self.max_toks:
                 batch.append(ex)  # this one can go in
                 max_len = max(max_len, this_len)
@@ -680,6 +681,8 @@ class BatchIterable(Iterable[Batch]):
             log.debug(f"\nLast batch, size={len(batch)}")
             yield Batch(batch, sort_dec=self.sort_desc, batch_first=self.batch_first,
                         field=self.field, device=self.device, y_is_cls=self.y_is_cls)
+
+        self.n_batches = len(self.data)
 
     def _make_eq_len_batch_ids(self):
         sort = 'y_len desc'
