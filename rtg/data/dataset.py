@@ -88,12 +88,12 @@ class TSVData(Iterable[IdExample]):
         self.longest_first = longest_first
         self.shuffle = shuffle
         self.truncate = truncate
+        self.rank = rank
+        self.world_size = world_size
         self.max_src_len, self.max_tgt_len = max_src_len, max_tgt_len
         self.mem = list(self.read_all()) if self.in_mem else None
         self._len = len(self.mem) if self.in_mem else line_count(path)
         self.read_counter = 0
-        self.rank = rank
-        self.world_size = world_size
 
     @staticmethod
     def _parse(line: str):
