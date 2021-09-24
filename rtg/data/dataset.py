@@ -101,9 +101,10 @@ class TSVData(Iterable[IdExample]):
 
     def read_all(self) -> Iterator[IdExample]:
         log.info(f"Loading TSV data, rank:{self.rank}, world size:{self.world_size}")
+        nums = 0
         with IO.reader(self.path) as lines:
-            recs = (line.split('\t') for line in lines)
-            for idx, rec in enumerate(recs):
+            for idx, line in enumerate(lines):
+                rec = line.split('\t')
                 if self.rank is not None and idx % self.world_size != self.rank:
                     continue
                 x = self._parse(rec[0].strip())
@@ -116,8 +117,10 @@ class TSVData(Iterable[IdExample]):
                 if not x or (y is not None and len(y) == 0):  # empty on one side
                     log.warning(f"Ignoring an empty record  x:{len(x)}    y:{len(y)}")
                     continue
+
+                nums +=1
                 if idx % 1000000 == 0:
-                    log.info(f"Loading {idx} records")
+                    log.info(f"Loading {idx} ({nums}) records")
                 yield IdExample(x, y, id=idx)
 
     def __len__(self):
